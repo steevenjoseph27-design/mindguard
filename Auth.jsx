@@ -151,27 +151,35 @@ export default function Auth({ onSuccess }) {
     setLoading(true); setErrors({});
     try {
       const data = await supabase.signUp(form.email, form.password);
-      if (data.error || !data.user) throw new Error(data.error?.message || "Erreur lors de la création du compte");
+      if (data.error) throw new Error(data.error?.message || "Erreur lors de la création du compte");
+      if (!data.user) throw new Error("Compte non créé — vérifie ton email");
 
       const consentRecord = { ...consents, timestamp: new Date().toISOString(), version: "1.0" };
+      const token = data.session?.access_token;
 
-      // Crée le profil
-      await supabase.dbFetch("profiles", "POST", {
-        user_id: data.user.id,
-        prenom: form.prenom,
-        age: +form.age,
-        profession: form.profession || null,
-        consents: consentRecord,
-        plan: consents.partner_anon ? "premium" : "free",
-        premium_until: consents.partner_anon ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() : null,
-        created_at: new Date().toISOString(),
-      }, "", data.session?.access_token);
+      // Crée le profil — on ignore l'erreur si ça échoue (RLS ou déjà existant)
+      try {
+        await supabase.dbFetch("profiles", "POST", {
+          user_id: data.user.id,
+          prenom: form.prenom,
+          age: +form.age,
+          profession: form.profession || null,
+          consents: consentRecord,
+          plan: consents.partner_anon ? "premium" : "free",
+          premium_until: consents.partner_anon ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() : null,
+          created_at: new Date().toISOString(),
+        }, "", token);
+      } catch (profileErr) {
+        console.warn("Profil non créé:", profileErr);
+        // On continue quand même — le compte Auth est créé
+      }
 
+      // Connexion réussie même si le profil n'a pas pu être créé
       onSuccess({
         id: data.user.id,
         email: form.email,
         prenom: form.prenom,
-        token: data.session?.access_token,
+        token: token,
         expires_at: data.session?.expires_at,
         consents: consentRecord,
         plan: consents.partner_anon ? "premium" : "free",
